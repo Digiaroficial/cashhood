@@ -108,15 +108,16 @@
         );
 
         // Constantes para las rutas de Firestore
-        const FIREBASE_COLLECTION_USERS = 'users';
-        const FIREBASE_COLLECTION_REQUESTS = 'requests';
+        const FIREBASE_COLLECTION_PROFILE = 'profile';
+        // Esta colección es ahora privada para cada usuario
+        const FIREBASE_COLLECTION_REQUESTS = 'requests'; 
 
         function App() {
             const [user, setUser] = useState(null);
             const [isAuthReady, setIsAuthReady] = useState(false);
             const [loading, setLoading] = useState(true);
             const [message, setMessage] = useState('');
-            const [page, setPage] = useState('login'); // 'login', 'dashboard', 'map', 'my-requests', 'create-request'
+            const [page, setPage] = useState('login'); // 'login', 'dashboard', 'my-requests', 'create-request'
             const [requests, setRequests] = useState([]);
             const [userLocation, setUserLocation] = useState(null);
             const [geolocationStatus, setGeolocationStatus] = useState('calculando'); // 'calculando', 'disponible', 'denegado'
@@ -142,7 +143,7 @@
                         try {
                             const { doc, updateDoc, setDoc } = window.firebase.firestore;
                             const db = window.firebase.db;
-                            const userRef = doc(db, `/artifacts/${appId}/users/${currentUser.uid}/profile/${currentUser.uid}`);
+                            const userRef = doc(db, `/artifacts/${appId}/users/${currentUser.uid}/${FIREBASE_COLLECTION_PROFILE}/${currentUser.uid}`);
                             await updateDoc(userRef, {
                                 email: currentUser.email,
                                 displayName: currentUser.displayName,
@@ -153,7 +154,7 @@
                             try {
                                 const { doc, setDoc } = window.firebase.firestore;
                                 const db = window.firebase.db;
-                                const userRef = doc(db, `/artifacts/${appId}/users/${currentUser.uid}/profile/${currentUser.uid}`);
+                                const userRef = doc(db, `/artifacts/${appId}/users/${currentUser.uid}/${FIREBASE_COLLECTION_PROFILE}/${currentUser.uid}`);
                                 await setDoc(userRef, {
                                     uid: currentUser.uid,
                                     email: currentUser.email,
@@ -176,14 +177,14 @@
             useEffect(() => {
                 const firebaseServices = window.firebase;
                 // Espera a que la autenticación esté lista antes de suscribirse
-                if (!isAuthReady || !firebaseServices) return;
+                if (!isAuthReady || !firebaseServices || !user) return;
                 
                 const db = firebaseServices.db;
                 const { collection, onSnapshot, query } = firebaseServices.firestore;
                 
-                // Lee las solicitudes del path público, que solo tiene permisos de lectura
+                // Lee las solicitudes desde la colección privada del usuario
                 const q = query(
-                    collection(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`)
+                    collection(db, `/artifacts/${appId}/users/${user.uid}/${FIREBASE_COLLECTION_REQUESTS}`)
                 );
 
                 const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -194,11 +195,11 @@
                     setRequests(requestsData);
                 }, (error) => {
                     console.error("Error al cargar las solicitudes:", error);
-                    setMessage("Error al cargar las solicitudes. Por favor, inténtalo de nuevo.");
+                    setMessage("Error al cargar tus solicitudes. Por favor, inténtalo de nuevo.");
                 });
 
                 return () => unsubscribe();
-            }, [isAuthReady]);
+            }, [isAuthReady, user]);
 
 
             // Geolocation
@@ -290,8 +291,8 @@
                 try {
                     setLoading(true);
                     const { collection, addDoc } = firebaseServices.firestore;
-                    // Intenta escribir en la colección pública. Si esto falla, es un problema de permisos.
-                    const requestsCollectionRef = collection(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`);
+                    // Intenta escribir en la colección privada del usuario
+                    const requestsCollectionRef = collection(db, `/artifacts/${appId}/users/${user.uid}/${FIREBASE_COLLECTION_REQUESTS}`);
                     await addDoc(requestsCollectionRef, {
                         requesterId: user.uid,
                         requesterEmail: user.email,
@@ -305,8 +306,9 @@
                     setPage('dashboard');
                 } catch (error) {
                     console.error("Error al crear la solicitud:", error);
+                    // El error de permisos ahora debería resolverse, pero si persiste, se mostrará este mensaje.
                     if (error.code && error.code === 'permission-denied') {
-                         setMessage("Error de permisos: Las reglas de seguridad de Firestore no permiten crear una solicitud en esta colección pública. Por favor, contacta al administrador.");
+                         setMessage("Error de permisos: Las reglas de seguridad de Firestore no permiten crear una solicitud en esta colección privada. Por favor, contacta al administrador.");
                     } else {
                         setMessage(`Error al crear la solicitud: ${error.message}`);
                     }
@@ -325,7 +327,8 @@
                 try {
                     setLoading(true);
                     const { doc, updateDoc } = firebaseServices.firestore;
-                    const requestRef = doc(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`, requestId);
+                    // La actualización de una solicitud también debe ser en la colección privada del usuario
+                    const requestRef = doc(db, `/artifacts/${appId}/users/${user.uid}/${FIREBASE_COLLECTION_REQUESTS}`, requestId);
                     await updateDoc(requestRef, {
                         status: 'accepted',
                         accepterId: user.uid,
@@ -388,8 +391,6 @@
                         return <AuthPage onLogin={handleLogin} onRegister={handleRegister} message={message} />;
                     case 'dashboard':
                         return <DashboardPage user={user} userId={userId} onLogout={handleLogout} setPage={setPage} />;
-                    case 'map':
-                        return <MapPage requests={requests.filter(req => req.status === 'pending' && req.requesterId !== user.uid)} userLocation={userLocation} getDistance={getDistance} onAccept={handleAcceptRequest} setPage={setPage} geolocationStatus={geolocationStatus} />;
                     case 'my-requests':
                         const myRequests = requests.filter(req => req.requesterId === user.uid || req.accepterId === user.uid);
                         return <MyRequestsPage requests={myRequests} userId={user.uid} setPage={setPage} />;
@@ -509,13 +510,10 @@
                             <button onClick={() => setPage('create-request')} className="w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-md text-sm font-semibold text-white bg-green-500 hover:bg-green-600 transition duration-150 ease-in-out">
                                 <span className="mr-2">+</span> Crear Solicitud
                             </button>
-                            <button onClick={() => setPage('map')} className="w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-md text-sm font-semibold text-white bg-blue-500 hover:bg-blue-600 transition duration-150 ease-in-out">
-                                <MapIcon /> <span className="ml-2">Ver Vecinos</span>
-                            </button>
                             <button onClick={() => setPage('my-requests')} className="w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-md text-sm font-semibold text-white bg-yellow-500 hover:bg-yellow-600 transition duration-150 ease-in-out">
                                 Mis Solicitudes
                             </button>
-                            <button onClick={onLogout} className="w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-md text-sm font-semibold text-white bg-red-500 hover:bg-red-600 transition duration-150 ease-in-out">
+                            <button onClick={onLogout} className="w-full col-span-1 md:col-span-2 flex items-center justify-center py-3 px-4 rounded-xl shadow-md text-sm font-semibold text-white bg-red-500 hover:bg-red-600 transition duration-150 ease-in-out">
                                 Cerrar Sesión
                             </button>
                         </div>
@@ -616,59 +614,6 @@
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            );
-        };
-
-        const MapPage = ({ requests, userLocation, getDistance, onAccept, setPage, geolocationStatus }) => {
-            return (
-                <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4">
-                    <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-4xl mt-10">
-                        <h1 className="text-3xl font-bold text-gray-800 mb-4">Vecinos Cercanos en CashHood</h1>
-                        <div className="relative w-full h-96 bg-gray-200 rounded-xl shadow-inner overflow-hidden mb-6 flex items-center justify-center">
-                            <p className="text-gray-500 font-semibold text-center p-4">
-                                [ Mapa de ubicación simulado ]<br />
-                                Tu ubicación actual: {geolocationStatus === 'calculando' ? 'Calculando...' : userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : 'Geolocalización no disponible'}
-                            </p>
-                        </div>
-                        {geolocationStatus === 'denegado' && (
-                            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm text-center">
-                                Por favor, habilita la geolocalización en la configuración de tu navegador para ver a tus vecinos.
-                            </div>
-                        )}
-                        <div className="space-y-4">
-                            <h2 className="text-2xl font-bold text-gray-700">Solicitudes Pendientes</h2>
-                            {requests.length > 0 ? (
-                                requests.map(req => (
-                                    <div key={req.id} className="bg-blue-50 p-4 rounded-xl shadow-sm border border-blue-200 flex flex-col md:flex-row justify-between items-center">
-                                        <div className="flex-grow text-sm mb-2 md:mb-0">
-                                            <p className="font-semibold text-gray-800">Monto: <span className="text-lg font-bold text-green-600">${req.amount.toFixed(2)}</span></p>
-                                            <p className="text-gray-600">
-                                                Tipo: <span className="font-semibold capitalize">{req.exchangeType}</span>
-                                            </p>
-                                            <p className="text-gray-600">
-                                                Distancia: {req.requesterLocation ? `${getDistance(userLocation, req.requesterLocation)} km` : 'Calculando...'}
-                                            </p>
-                                            <p className="text-gray-500 break-all">ID del solicitante: {req.requesterId}</p>
-                                        </div>
-                                        <div className="flex space-x-2">
-                                            <button onClick={() => onAccept(req.id)} className="px-4 py-2 bg-green-500 text-white rounded-md shadow-md text-sm hover:bg-green-600 transition duration-150">Aceptar</button>
-                                        </div>
-                                    </div>
-                                ))
-                            ) : (
-                                <div className="bg-gray-100 p-4 rounded-md text-center text-gray-500">
-                                    No hay solicitudes de intercambio cercanas.
-                                </div>
-                            )}
-                        </div>
-                        <button
-                            onClick={() => setPage('dashboard')}
-                            className="w-full mt-6 py-3 px-4 border border-gray-300 rounded-xl shadow-md text-sm font-semibold text-gray-700 bg-white hover:bg-gray-50 transition duration-150 ease-in-out"
-                        >
-                            Volver al Panel de Control
-                        </button>
                     </div>
                 </div>
             );
