@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CashHood - Intercambio de Efectivo</title>
+    <!-- Incluye Tailwind CSS desde CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+    <!-- Incluye React y ReactDOM desde CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Incluye Babel para transpilar JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Incluye Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, collection, addDoc, getDocs, onSnapshot, query, where, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        window.firebase = { initializeApp, getAuth, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut, signInAnonymously };
+        window.firestore = { getFirestore, doc, collection, addDoc, getDocs, onSnapshot, query, where, updateDoc, setDoc };
+    </script>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { initializeApp, getAuth, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut, signInAnonymously } = window.firebase;
+        const { getFirestore, doc, collection, addDoc, onSnapshot, query, updateDoc, setDoc } = window.firestore;
+
+        // Tailwind CSS is assumed to be available
+        // For map, we use a mock representation
+        const MapIcon = () => (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+        );
+
+        // Constants for Firestore paths
+        const FIREBASE_COLLECTION_USERS = 'users';
+        const FIREBASE_COLLECTION_REQUESTS = 'requests';
+        
+        // These are global variables provided by the Canvas environment
+        const __app_id = typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-app-id';
+        const __firebase_config = typeof window.__firebase_config !== 'undefined' ? window.__firebase_config : '{}';
+        const __initial_auth_token = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : undefined;
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [auth, setAuth] = useState(null);
+            const [db, setDb] = useState(null);
+            const [page, setPage] = useState('login'); // 'login', 'dashboard', 'map', 'my-requests', 'create-request'
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [loading, setLoading] = useState(true);
+            const [message, setMessage] = useState('');
+            const [requests, setRequests] = useState([]);
+            const [userLocation, setUserLocation] = useState(null);
+
+            // Get the user ID from the auth state
+            const userId = user?.uid || crypto.randomUUID();
+            const appId = __app_id;
+
+            // Firebase Initialization & Auth Listener
+            useEffect(() => {
+                const initializeFirebase = async () => {
+                    try {
+                        const firebaseConfig = JSON.parse(__firebase_config);
+                        const app = initializeApp(firebaseConfig);
+                        const authInstance = getAuth(app);
+                        const dbInstance = getFirestore(app);
+
+                        setAuth(authInstance);
+                        setDb(dbInstance);
+
+                        // Check for custom token
+                        if (__initial_auth_token) {
+                            await signInWithCustomToken(authInstance, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(authInstance);
+                        }
+
+                        onAuthStateChanged(authInstance, (currentUser) => {
+                            if (currentUser) {
+                                setUser(currentUser);
+                                // Save user to Firestore if they don't exist
+                                const userRef = doc(dbInstance, `/artifacts/${appId}/users/${currentUser.uid}/profile/${currentUser.uid}`);
+                                updateDoc(userRef, {
+                                    email: currentUser.email,
+                                    displayName: currentUser.displayName,
+                                    lastLogin: new Date()
+                                }, { merge: true }).catch(() => {
+                                    // Doc might not exist, so create it
+                                    setDoc(userRef, {
+                                        uid: currentUser.uid,
+                                        email: currentUser.email,
+                                        displayName: currentUser.displayName,
+                                        createdAt: new Date(),
+                                        lastLogin: new Date()
+                                    });
+                                });
+                                setPage('dashboard');
+                            } else {
+                                setUser(null);
+                                setPage('login');
+                            }
+                            setIsAuthReady(true);
+                        });
+                    } catch (e) {
+                        console.error("Error initializing Firebase:", e);
+                        setMessage("Error al iniciar la aplicación. Por favor, inténtalo de nuevo.");
+                    } finally {
+                        // Ensure loading state is set to false after initialization attempt
+                        setLoading(false);
+                    }
+                };
+
+                if (!auth) {
+                    initializeFirebase();
+                }
+            }, [auth]);
+
+            // Firestore Real-time Listener for requests
+            useEffect(() => {
+                if (!db || !isAuthReady || !user) return;
+
+                const q = query(
+                    collection(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`)
+                );
+
+                const unsubscribe = onSnapshot(q, (querySnapshot) => {
+                    const requestsData = querySnapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+
+                    setRequests(requestsData);
+                }, (error) => {
+                    console.error("Error fetching requests:", error);
+                    setMessage("Error al cargar las solicitudes.");
+                });
+
+                return () => unsubscribe();
+            }, [db, isAuthReady, user, appId]);
+
+
+            // Geolocation
+            useEffect(() => {
+                if ("geolocation" in navigator) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            setUserLocation({
+                                lat: position.coords.latitude,
+                                lng: position.coords.longitude
+                            });
+                        },
+                        (error) => {
+                            console.error("Error al obtener la ubicación:", error.message || error);
+                            setMessage("Por favor, habilita la ubicación para usar la función de vecinos cercanos.");
+                        }
+                    );
+                } else {
+                    setMessage("La geolocalización no está disponible en este navegador.");
+                }
+            }, []);
+
+            const handleLogin = async (email, password) => {
+                try {
+                    setLoading(true);
+                    await signInWithEmailAndPassword(auth, email, password);
+                    setMessage('Inicio de sesión exitoso.');
+                } catch (error) {
+                    setMessage(`Error de inicio de sesión: ${error.message}`);
+                    console.error("Login error:", error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleRegister = async (email, password) => {
+                try {
+                    setLoading(true);
+                    await createUserWithEmailAndPassword(auth, email, password);
+                    setMessage('Registro exitoso. Has iniciado sesión.');
+                } catch (error) {
+                    setMessage(`Error de registro: ${error.message}`);
+                    console.error("Registration error:", error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleGoogleLogin = async () => {
+                try {
+                    setLoading(true);
+                    const provider = new GoogleAuthProvider();
+                    await signInWithPopup(auth, provider);
+                    setMessage('Inicio de sesión con Google exitoso.');
+                } catch (error) {
+                    setMessage(`Error al iniciar sesión con Google: ${error.message}`);
+                    console.error("Google login error:", error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleLogout = async () => {
+                try {
+                    await signOut(auth);
+                    setMessage('');
+                    setPage('login');
+                } catch (error) {
+                    setMessage(`Error al cerrar sesión: ${error.message}`);
+                }
+            };
+
+            const createExchangeRequest = async (amount, exchangeType) => {
+                if (!user || !userLocation) {
+                    setMessage("Error: Debes iniciar sesión y habilitar tu ubicación para crear una solicitud.");
+                    return;
+                }
+
+                try {
+                    setLoading(true);
+                    await addDoc(collection(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`), {
+                        requesterId: user.uid,
+                        requesterEmail: user.email,
+                        amount: parseFloat(amount),
+                        exchangeType: exchangeType, // New field for exchange type
+                        status: 'pending',
+                        requesterLocation: userLocation,
+                        createdAt: new Date().toISOString()
+                    });
+                    setMessage('Solicitud de intercambio creada con éxito.');
+                    setPage('dashboard');
+                } catch (error) {
+                    setMessage(`Error al crear la solicitud: ${error.message}`);
+                    console.error("Create request error:", error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleAcceptRequest = async (requestId) => {
+                if (!user) {
+                    setMessage("Error: Debes iniciar sesión para aceptar una solicitud.");
+                    return;
+                }
+
+                try {
+                    setLoading(true);
+                    const requestRef = doc(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`, requestId);
+                    await updateDoc(requestRef, {
+                        status: 'accepted',
+                        accepterId: user.uid,
+                        acceptedAt: new Date().toISOString()
+                    });
+                    setMessage('Solicitud aceptada. ¡Contacta al vecino para coordinar el intercambio!');
+                    setPage('my-requests');
+                } catch (error) {
+                    setMessage(`Error al aceptar la solicitud: ${error.message}`);
+                    console.error("Accept request error:", error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleRejectRequest = async (requestId) => {
+                if (!user) {
+                    setMessage("Error: Debes iniciar sesión para rechazar una solicitud.");
+                    return;
+                }
+
+                try {
+                    setLoading(true);
+                    const requestRef = doc(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`, requestId);
+                    await updateDoc(requestRef, {
+                        status: 'rejected',
+                        rejectedBy: user.uid,
+                        rejectedAt: new Date().toISOString()
+                    });
+                    setMessage('Solicitud rechazada.');
+                } catch (error) {
+                    setMessage(`Error al rechazar la solicitud: ${error.message}`);
+                    console.error("Reject request error:", error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            // Calculate distance between two points (Haversine formula)
+            const getDistance = (loc1, loc2) => {
+                if (!loc1 || !loc2) return 'Desconocida';
+                const R = 6371; // Radius of the Earth in km
+                const dLat = (loc2.lat - loc1.lat) * Math.PI / 180;
+                const dLon = (loc2.lng - loc1.lng) * Math.PI / 180;
+                const a =
+                    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos(loc1.lat * Math.PI / 180) * Math.cos(loc2.lat * Math.PI / 180) *
+                    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                return (R * c).toFixed(2); // Distance in km
+            };
+
+            const renderPage = () => {
+                if (loading) {
+                    return (
+                        <div className="flex items-center justify-center min-h-screen bg-gray-100">
+                            <div className="text-xl font-semibold text-gray-700">Cargando aplicación...</div>
+                        </div>
+                    );
+                }
+
+                switch (page) {
+                    case 'login':
+                        return <AuthPage onLogin={handleLogin} onRegister={handleRegister} onGoogleLogin={handleGoogleLogin} message={message} />;
+                    case 'dashboard':
+                        return <DashboardPage user={user} userId={userId} onLogout={handleLogout} setPage={setPage} />;
+                    case 'map':
+                        return <MapPage requests={requests.filter(req => req.status === 'pending' && req.requesterId !== user.uid)} userLocation={userLocation} getDistance={getDistance} onAccept={handleAcceptRequest} onReject={handleRejectRequest} setPage={setPage} />;
+                    case 'my-requests':
+                        const myRequests = requests.filter(req => req.requesterId === user.uid || req.accepterId === user.uid);
+                        return <MyRequestsPage requests={myRequests} userId={user.uid} setPage={setPage} />;
+                    case 'create-request':
+                        return <CreateRequestPage onCreate={createExchangeRequest} setPage={setPage} />;
+                    default:
+                        return <AuthPage onLogin={handleLogin} onRegister={handleRegister} onGoogleLogin={handleGoogleLogin} message={message} />;
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-100 font-inter">
+                    {message && (
+                        <div className="bg-blue-500 text-white p-3 text-center fixed top-0 w-full z-50">
+                            {message}
+                        </div>
+                    )}
+                    {renderPage()}
+                </div>
+            );
+        }
+
+        // --- Components ---
+
+        const AuthPage = ({ onLogin, onRegister, onGoogleLogin, message }) => {
+            const [isLogin, setIsLogin] = useState(true);
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [passwordConfirm, setPasswordConfirm] = useState('');
+            const [localMessage, setLocalMessage] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                setLocalMessage('');
+                if (isLogin) {
+                    onLogin(email, password);
+                } else {
+                    if (password !== passwordConfirm) {
+                        setLocalMessage('Las contraseñas no coinciden.');
+                        return;
+                    }
+                    onRegister(email, password);
+                }
+            };
+
+            return (
+                <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
+                    <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
+                        <h1 className="text-3xl font-bold mb-6 text-center text-gray-800">
+                            Bienvenido a CashHood
+                        </h1>
+                        <p className="text-center text-gray-600 mb-6">{isLogin ? 'Inicia sesión para empezar.' : 'Crea tu cuenta para empezar.'}</p>
+                        {message && <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4 text-sm">{message}</div>}
+                        {localMessage && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm">{localMessage}</div>}
+
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Correo Electrónico</label>
+                                <input
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    required
+                                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Contraseña</label>
+                                <input
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    required
+                                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                />
+                            </div>
+                            {!isLogin && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Confirmar Contraseña</label>
+                                    <input
+                                        type="password"
+                                        value={passwordConfirm}
+                                        onChange={(e) => setPasswordConfirm(e.target.value)}
+                                        required
+                                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                    />
+                                </div>
+                            )}
+                            <button
+                                type="submit"
+                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-150 ease-in-out"
+                            >
+                                {isLogin ? 'Iniciar Sesión' : 'Registrarse'}
+                            </button>
+                        </form>
+
+                        <div className="mt-6 flex items-center justify-between">
+                            <span className="w-1/3 border-b border-gray-300"></span>
+                            <span className="text-xs text-gray-500 uppercase px-2">O</span>
+                            <span className="w-1/3 border-b border-gray-300"></span>
+                        </div>
+
+                        <div className="mt-6">
+                            <button
+                                onClick={onGoogleLogin}
+                                className="w-full flex items-center justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-150 ease-in-out"
+                            >
+                                <svg className="w-5 h-5 mr-2" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+                                    <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8.083-11.303,8.083c-6.703,0-12.145-5.442-12.145-12.145c0-6.703,5.442-12.146,12.145-12.146c3.15,0,6.072,1.102,8.374,3.151l4.491-4.491C34.024,6.669,29.355,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.319,43.611,20.083z"/>
+                                    <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.653,29.728,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
+                                    <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
+                                    <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.148-4.142,5.556c0.91,0.722,1.85,1.291,2.777,1.815l3.866,2.695C39.011,34.225,41.521,29.987,43.611,20.083z"/>
+                                </svg>
+                                Iniciar Sesión con Google
+                            </button>
+                        </div>
+
+                        <div className="mt-6 text-center">
+                            <button onClick={() => setIsLogin(!isLogin)} className="text-sm font-medium text-blue-600 hover:text-blue-500">
+                                {isLogin ? '¿No tienes una cuenta? Regístrate' : '¿Ya tienes una cuenta? Inicia sesión'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const DashboardPage = ({ user, userId, onLogout, setPage }) => {
+            return (
+                <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4">
+                    <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg mt-10">
+                        <h1 className="text-3xl font-bold text-gray-800 mb-2">Panel de Control de CashHood</h1>
+                        <p className="text-gray-600 mb-6">Bienvenido, {user.email}.</p>
+                        <div className="p-4 bg-gray-50 rounded-lg text-sm text-gray-500 break-all mb-4">
+                            <p className="font-semibold">Tu ID de usuario es:</p>
+                            <p>{userId}</p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <button onClick={() => setPage('create-request')} className="w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-md text-sm font-semibold text-white bg-green-500 hover:bg-green-600 transition duration-150 ease-in-out">
+                                <span className="mr-2">+</span> Crear Solicitud
+                            </button>
+                            <button onClick={() => setPage('map')} className="w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-md text-sm font-semibold text-white bg-blue-500 hover:bg-blue-600 transition duration-150 ease-in-out">
+                                <MapIcon /> <span className="ml-2">Ver Vecinos</span>
+                            </button>
+                            <button onClick={() => setPage('my-requests')} className="w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-md text-sm font-semibold text-white bg-yellow-500 hover:bg-yellow-600 transition duration-150 ease-in-out">
+                                Mis Solicitudes
+                            </button>
+                            <button onClick={onLogout} className="w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-md text-sm font-semibold text-white bg-red-500 hover:bg-red-600 transition duration-150 ease-in-out">
+                                Cerrar Sesión
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const CreateRequestPage = ({ onCreate, setPage }) => {
+            const [amount, setAmount] = useState('');
+            const [exchangeType, setExchangeType] = useState('cash'); // Default to cash
+            const [localMessage, setLocalMessage] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                setLocalMessage('');
+                if (amount <= 0) {
+                    setLocalMessage('El monto debe ser mayor que 0.');
+                    return;
+                }
+                onCreate(amount, exchangeType);
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4">
+                    <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg mt-10">
+                        <h1 className="text-3xl font-bold text-gray-800 mb-4">Crear Nueva Solicitud en CashHood</h1>
+                        {localMessage && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm">{localMessage}</div>}
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Monto a intercambiar (ej. 100)</label>
+                                <input
+                                    type="number"
+                                    value={amount}
+                                    onChange={(e) => setAmount(e.target.value)}
+                                    required
+                                    min="1"
+                                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Intercambio</label>
+                                <div className="flex gap-4">
+                                    <label className="inline-flex items-center">
+                                        <input
+                                            type="radio"
+                                            name="exchangeType"
+                                            value="cash"
+                                            checked={exchangeType === 'cash'}
+                                            onChange={() => setExchangeType('cash')}
+                                            className="form-radio text-blue-600"
+                                        />
+                                        <span className="ml-2 text-gray-700">Efectivo</span>
+                                    </label>
+                                    <label className="inline-flex items-center">
+                                        <input
+                                            type="radio"
+                                            name="exchangeType"
+                                            value="transfer"
+                                            checked={exchangeType === 'transfer'}
+                                            onChange={() => setExchangeType('transfer')}
+                                            className="form-radio text-blue-600"
+                                        />
+                                        <span className="ml-2 text-gray-700">Transferencia</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div className="flex gap-4">
+                                <button
+                                    type="submit"
+                                    className="flex-1 py-3 px-4 border border-transparent rounded-md shadow-md text-sm font-semibold text-white bg-green-500 hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-150 ease-in-out"
+                                >
+                                    Enviar Solicitud
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setPage('dashboard')}
+                                    className="flex-1 py-3 px-4 border border-gray-300 rounded-md shadow-md text-sm font-semibold text-gray-700 bg-white hover:bg-gray-50 transition duration-150 ease-in-out"
+                                >
+                                    Volver al Panel de Control
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        const MapPage = ({ requests, userLocation, getDistance, onAccept, onReject, setPage }) => {
+            return (
+                <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4">
+                    <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-4xl mt-10">
+                        <h1 className="text-3xl font-bold text-gray-800 mb-4">Vecinos Cercanos en CashHood</h1>
+                        <div className="relative w-full h-96 bg-gray-200 rounded-xl shadow-inner overflow-hidden mb-6 flex items-center justify-center">
+                            <p className="text-gray-500 font-semibold text-center p-4">
+                                [ Mapa de ubicación simulado ]<br />
+                                Tu ubicación actual: {userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : 'Calculando...'}
+                            </p>
+                        </div>
+                        <div className="space-y-4">
+                            <h2 className="text-2xl font-bold text-gray-700">Solicitudes Pendientes</h2>
+                            {requests.length > 0 ? (
+                                requests.map(req => (
+                                    <div key={req.id} className="bg-blue-50 p-4 rounded-xl shadow-sm border border-blue-200 flex flex-col md:flex-row justify-between items-center">
+                                        <div className="flex-grow text-sm mb-2 md:mb-0">
+                                            <p className="font-semibold text-gray-800">Monto: <span className="text-lg font-bold text-green-600">${req.amount.toFixed(2)}</span></p>
+                                            <p className="text-gray-600">
+                                                Tipo: <span className="font-semibold capitalize">{req.exchangeType}</span>
+                                            </p>
+                                            <p className="text-gray-600">
+                                                Distancia: {req.requesterLocation ? `${getDistance(userLocation, req.requesterLocation)} km` : 'Calculando...'}
+                                            </p>
+                                            <p className="text-gray-500 break-all">ID del solicitante: {req.requesterId}</p>
+                                        </div>
+                                        <div className="flex space-x-2">
+                                            <button onClick={() => handleAcceptRequest(req.id)} className="px-4 py-2 bg-green-500 text-white rounded-md shadow-md text-sm hover:bg-green-600 transition duration-150">Aceptar</button>
+                                            <button onClick={() => handleRejectRequest(req.id)} className="px-4 py-2 bg-red-500 text-white rounded-md shadow-md text-sm hover:bg-red-600 transition duration-150">Rechazar</button>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="bg-gray-100 p-4 rounded-md text-center text-gray-500">
+                                    No hay solicitudes de intercambio cercanas.
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => setPage('dashboard')}
+                            className="w-full mt-6 py-3 px-4 border border-gray-300 rounded-xl shadow-md text-sm font-semibold text-gray-700 bg-white hover:bg-gray-50 transition duration-150 ease-in-out"
+                        >
+                            Volver al Panel de Control
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const MyRequestsPage = ({ requests, userId, setPage }) => {
+            return (
+                <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4">
+                    <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg mt-10">
+                        <h1 className="text-3xl font-bold text-gray-800 mb-4">Mis Solicitudes en CashHood</h1>
+                        <div className="space-y-4">
+                            {requests.length > 0 ? (
+                                requests.map(req => (
+                                    <div key={req.id} className={`p-4 rounded-xl shadow-sm border ${req.status === 'pending' ? 'bg-yellow-50 border-yellow-200' : req.status === 'accepted' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                                        <div className="flex items-center justify-between">
+                                            <p className="font-semibold text-gray-800">Monto: <span className="text-lg font-bold text-green-600">${req.amount.toFixed(2)}</span></p>
+                                            <span className={`text-sm font-medium px-2 py-1 rounded-full ${req.status === 'pending' ? 'bg-yellow-500 text-white' : req.status === 'accepted' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+                                                {req.status === 'pending' ? 'Pendiente' : req.status === 'accepted' ? 'Aceptada' : 'Rechazada'}
+                                            </span>
+                                        </div>
+                                        <div className="mt-2 text-sm text-gray-600">
+                                            <p>Tipo: <span className="font-semibold capitalize">{req.exchangeType}</span></p>
+                                            {req.requesterId === userId ? (
+                                                <p>Tú solicitaste este intercambio.</p>
+                                            ) : (
+                                                <p>Tú aceptaste este intercambio de {req.requesterEmail}.</p>
+                                            )}
+                                            {req.status === 'accepted' && (
+                                                <p className="mt-1 font-semibold text-green-700">¡El intercambio fue aceptado! Contacta al vecino para coordinar.</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="bg-gray-100 p-4 rounded-md text-center text-gray-500">
+                                    No tienes solicitudes de intercambio.
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => setPage('dashboard')}
+                            className="w-full mt-6 py-3 px-4 border border-gray-300 rounded-xl shadow-md text-sm font-semibold text-gray-700 bg-white hover:bg-gray-50 transition duration-150 ease-in-out"
+                        >
+                            Volver al Panel de Control
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        window.onload = () => {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(
+                <React.StrictMode>
+                    <App />
+                </React.StrictMode>
+            );
+        };
+    </script>
+</body>
+</html>
