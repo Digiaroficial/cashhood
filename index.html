@@ -63,7 +63,7 @@
             // Inicialización de Firebase y Auth Listener
             useEffect(() => {
                 const initializeFirebase = async () => {
-                    // Verificamos que firebase esté disponible globalmente
+                    // Verificamos que window.firebase esté disponible globalmente
                     if (!window.firebase) {
                         console.error("Firebase no está definido. Los scripts pueden no haberse cargado.");
                         setMessage("Error al iniciar. Recarga la página.");
@@ -122,8 +122,11 @@
                     }
                 };
 
-                initializeFirebase();
-            }, []);
+                // No inicializamos si ya tenemos una instancia de auth
+                if (!auth) {
+                    initializeFirebase();
+                }
+            }, [auth]);
 
             // Firestore Real-time Listener for requests
             useEffect(() => {
@@ -171,6 +174,11 @@
             }, []);
 
             const handleLogin = async (email, password) => {
+                // Se verifica que 'auth' exista antes de usarlo
+                if (!auth) {
+                    setMessage("El servicio de autenticación no está listo.");
+                    return;
+                }
                 try {
                     setLoading(true);
                     const { signInWithEmailAndPassword } = window.firebase.auth;
@@ -185,6 +193,11 @@
             };
 
             const handleRegister = async (email, password) => {
+                // Se verifica que 'auth' exista antes de usarlo
+                if (!auth) {
+                    setMessage("El servicio de autenticación no está listo.");
+                    return;
+                }
                 try {
                     setLoading(true);
                     const { createUserWithEmailAndPassword } = window.firebase.auth;
@@ -199,6 +212,11 @@
             };
 
             const handleGoogleLogin = async () => {
+                // Se verifica que 'auth' exista antes de usarlo
+                if (!auth) {
+                    setMessage("El servicio de autenticación no está listo.");
+                    return;
+                }
                 try {
                     setLoading(true);
                     const { GoogleAuthProvider, signInWithPopup } = window.firebase.auth;
@@ -214,6 +232,7 @@
             };
 
             const handleLogout = async () => {
+                if (!auth) return;
                 try {
                     const { signOut } = window.firebase.auth;
                     await signOut(auth);
@@ -225,7 +244,7 @@
             };
 
             const createExchangeRequest = async (amount, exchangeType) => {
-                if (!user || !userLocation) {
+                if (!user || !userLocation || !db) {
                     setMessage("Error: Debes iniciar sesión y habilitar tu ubicación para crear una solicitud.");
                     return;
                 }
@@ -252,7 +271,7 @@
             };
 
             const handleAcceptRequest = async (requestId) => {
-                if (!user) {
+                if (!user || !db) {
                     setMessage("Error: Debes iniciar sesión para aceptar una solicitud.");
                     return;
                 }
@@ -276,7 +295,7 @@
             };
 
             const handleRejectRequest = async (requestId) => {
-                if (!user) {
+                if (!user || !db) {
                     setMessage("Error: Debes iniciar sesión para rechazar una solicitud.");
                     return;
                 }
