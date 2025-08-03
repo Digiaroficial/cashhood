@@ -121,6 +121,7 @@
             const [page, setPage] = useState('login'); // 'login', 'dashboard', 'map', 'my-requests', 'create-request'
             const [requests, setRequests] = useState([]);
             const [userLocation, setUserLocation] = useState(null);
+            const [geolocationStatus, setGeolocationStatus] = useState('calculando'); // 'calculando', 'disponible', 'denegado'
 
             const userId = user?.uid || 'anonymous';
             const appId = window.firebase?.appId || 'default-app-id';
@@ -213,15 +214,18 @@
                             lat: position.coords.latitude,
                             lng: position.coords.longitude
                         });
+                        setGeolocationStatus('disponible');
                     };
                     const geoError = (error) => {
                         console.error("Error al obtener la ubicación:", error.message || error);
                         setMessage("Por favor, habilita la ubicación para usar la función de vecinos cercanos.");
+                        setGeolocationStatus('denegado');
                     };
                     const watchId = navigator.geolocation.watchPosition(geoSuccess, geoError, geoOptions);
                     return () => navigator.geolocation.clearWatch(watchId);
                 } else {
                     setMessage("La geolocalización no está disponible en este navegador.");
+                    setGeolocationStatus('denegado');
                 }
             }, []);
 
@@ -263,25 +267,8 @@
                 }
             };
 
-            const handleGoogleLogin = async () => {
-                const { GoogleAuthProvider, signInWithPopup, instance: authInstance } = window.firebase.auth || {};
-                if (!authInstance) {
-                    setMessage("Error: El servicio de autenticación no está disponible.");
-                    return;
-                }
-                try {
-                    setLoading(true);
-                    const provider = new GoogleAuthProvider();
-                    await signInWithPopup(authInstance, provider);
-                    setMessage('Inicio de sesión con Google exitoso.');
-                } catch (error) {
-                    const friendlyMessage = getAuthErrorMessage(error.code);
-                    setMessage(friendlyMessage);
-                    console.error("Google login error:", error);
-                } finally {
-                    setLoading(false);
-                }
-            };
+            // Se elimina la función de inicio de sesión de Google
+            // const handleGoogleLogin = ...;
 
             const handleLogout = async () => {
                 const { signOut, instance: authInstance } = window.firebase.auth || {};
@@ -393,18 +380,18 @@
 
                 switch (page) {
                     case 'login':
-                        return <AuthPage onLogin={handleLogin} onRegister={handleRegister} onGoogleLogin={handleGoogleLogin} message={message} />;
+                        return <AuthPage onLogin={handleLogin} onRegister={handleRegister} message={message} />;
                     case 'dashboard':
                         return <DashboardPage user={user} userId={userId} onLogout={handleLogout} setPage={setPage} />;
                     case 'map':
-                        return <MapPage requests={requests.filter(req => req.status === 'pending' && req.requesterId !== user.uid)} userLocation={userLocation} getDistance={getDistance} onAccept={handleAcceptRequest} setPage={setPage} />;
+                        return <MapPage requests={requests.filter(req => req.status === 'pending' && req.requesterId !== user.uid)} userLocation={userLocation} getDistance={getDistance} onAccept={handleAcceptRequest} setPage={setPage} geolocationStatus={geolocationStatus} />;
                     case 'my-requests':
                         const myRequests = requests.filter(req => req.requesterId === user.uid || req.accepterId === user.uid);
                         return <MyRequestsPage requests={myRequests} userId={user.uid} setPage={setPage} />;
                     case 'create-request':
-                        return <CreateRequestPage onCreate={createExchangeRequest} setPage={setPage} />;
+                        return <CreateRequestPage onCreate={createExchangeRequest} setPage={setPage} userLocation={userLocation} geolocationStatus={geolocationStatus} />;
                     default:
-                        return <AuthPage onLogin={handleLogin} onRegister={handleRegister} onGoogleLogin={handleGoogleLogin} message={message} />;
+                        return <AuthPage onLogin={handleLogin} onRegister={handleRegister} message={message} />;
                 }
             };
 
@@ -422,7 +409,7 @@
 
         // --- Componentes ---
 
-        const AuthPage = ({ onLogin, onRegister, onGoogleLogin, message }) => {
+        const AuthPage = ({ onLogin, onRegister, message }) => {
             const [isLogin, setIsLogin] = useState(true);
             const [email, setEmail] = useState('');
             const [password, setPassword] = useState('');
@@ -493,28 +480,6 @@
                                 {isLogin ? 'Iniciar Sesión' : 'Registrarse'}
                             </button>
                         </form>
-
-                        <div className="mt-6 flex items-center justify-between">
-                            <span className="w-1/3 border-b border-gray-300"></span>
-                            <span className="text-xs text-gray-500 uppercase px-2">O</span>
-                            <span className="w-1/3 border-b border-gray-300"></span>
-                        </div>
-
-                        <div className="mt-6">
-                            <button
-                                onClick={onGoogleLogin}
-                                className="w-full flex items-center justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-150 ease-in-out"
-                            >
-                                <svg className="w-5 h-5 mr-2" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-                                    <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8.083-11.303,8.083c-6.703,0-12.145-5.442-12.145-12.145c0-6.703,5.442-12.146,12.145-12.146c3.15,0,6.072,1.102,8.374,3.151l4.491-4.491C34.024,6.669,29.355,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.319,43.611,20.083z"/>
-                                    <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.653,29.728,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
-                                    <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
-                                    <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.148-4.142,5.556c0.91,0.722,1.85,1.291,2.777,1.815l3.866,2.695C39.011,34.225,41.521,29.987,43.611,20.083z"/>
-                                </svg>
-                                Iniciar Sesión con Google
-                            </button>
-                        </div>
-
                         <div className="mt-6 text-center">
                             <button onClick={() => setIsLogin(!isLogin)} className="text-sm font-medium text-blue-600 hover:text-blue-500">
                                 {isLogin ? '¿No tienes una cuenta? Regístrate' : '¿Ya tienes una cuenta? Inicia sesión'}
@@ -554,26 +519,42 @@
             );
         };
 
-        const CreateRequestPage = ({ onCreate, setPage }) => {
+        const CreateRequestPage = ({ onCreate, setPage, userLocation, geolocationStatus }) => {
             const [amount, setAmount] = useState('');
             const [exchangeType, setExchangeType] = useState('cash'); // Default to cash
             const [localMessage, setLocalMessage] = useState('');
+            const [isSubmitting, setIsSubmitting] = useState(false);
 
-            const handleSubmit = (e) => {
+            const handleSubmit = async (e) => {
                 e.preventDefault();
                 setLocalMessage('');
                 if (parseFloat(amount) <= 0 || isNaN(parseFloat(amount))) {
                     setLocalMessage('El monto debe ser un número válido mayor que 0.');
                     return;
                 }
-                onCreate(amount, exchangeType);
+                setIsSubmitting(true);
+                await onCreate(amount, exchangeType);
+                setIsSubmitting(false);
             };
+
+            const isButtonDisabled = isSubmitting || geolocationStatus !== 'disponible';
+            const buttonText = isSubmitting ? 'Enviando...' : 'Enviar Solicitud';
 
             return (
                 <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4">
                     <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg mt-10">
                         <h1 className="text-3xl font-bold text-gray-800 mb-4">Crear Nueva Solicitud en CashHood</h1>
                         {localMessage && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm">{localMessage}</div>}
+                        {geolocationStatus === 'calculando' && (
+                            <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4 text-sm text-center animate-pulse">
+                                Calculando tu ubicación...
+                            </div>
+                        )}
+                        {geolocationStatus === 'denegado' && (
+                            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm text-center">
+                                Por favor, habilita la geolocalización en la configuración de tu navegador para crear una solicitud.
+                            </div>
+                        )}
                         <form onSubmit={handleSubmit} className="space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700">Monto a intercambiar (ej. 100)</label>
@@ -616,9 +597,10 @@
                             <div className="flex gap-4">
                                 <button
                                     type="submit"
-                                    className="flex-1 py-3 px-4 border border-transparent rounded-md shadow-md text-sm font-semibold text-white bg-green-500 hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-150 ease-in-out"
+                                    disabled={isButtonDisabled}
+                                    className={`flex-1 py-3 px-4 border border-transparent rounded-md shadow-md text-sm font-semibold text-white transition duration-150 ease-in-out ${isButtonDisabled ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500'}`}
                                 >
-                                    Enviar Solicitud
+                                    {buttonText}
                                 </button>
                                 <button
                                     type="button"
@@ -634,7 +616,7 @@
             );
         };
 
-        const MapPage = ({ requests, userLocation, getDistance, onAccept, setPage }) => {
+        const MapPage = ({ requests, userLocation, getDistance, onAccept, setPage, geolocationStatus }) => {
             return (
                 <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4">
                     <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-4xl mt-10">
@@ -642,9 +624,14 @@
                         <div className="relative w-full h-96 bg-gray-200 rounded-xl shadow-inner overflow-hidden mb-6 flex items-center justify-center">
                             <p className="text-gray-500 font-semibold text-center p-4">
                                 [ Mapa de ubicación simulado ]<br />
-                                Tu ubicación actual: {userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : 'Calculando...'}
+                                Tu ubicación actual: {geolocationStatus === 'calculando' ? 'Calculando...' : userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : 'Geolocalización no disponible'}
                             </p>
                         </div>
+                        {geolocationStatus === 'denegado' && (
+                            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm text-center">
+                                Por favor, habilita la geolocalización en la configuración de tu navegador para ver a tus vecinos.
+                            </div>
+                        )}
                         <div className="space-y-4">
                             <h2 className="text-2xl font-bold text-gray-700">Solicitudes Pendientes</h2>
                             {requests.length > 0 ? (
