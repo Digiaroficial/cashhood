@@ -175,11 +175,13 @@
             // Listener de Firestore en tiempo real para las solicitudes
             useEffect(() => {
                 const firebaseServices = window.firebase;
-                if (!isAuthReady || !user || !firebaseServices) return;
+                // Espera a que la autenticación esté lista antes de suscribirse
+                if (!isAuthReady || !firebaseServices) return;
                 
                 const db = firebaseServices.db;
                 const { collection, onSnapshot, query } = firebaseServices.firestore;
                 
+                // Lee las solicitudes del path público, que solo tiene permisos de lectura
                 const q = query(
                     collection(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`)
                 );
@@ -196,7 +198,7 @@
                 });
 
                 return () => unsubscribe();
-            }, [isAuthReady, user]);
+            }, [isAuthReady]);
 
 
             // Geolocation
@@ -288,7 +290,7 @@
                 try {
                     setLoading(true);
                     const { collection, addDoc } = firebaseServices.firestore;
-                    // Aseguramos que la ruta de Firestore es correcta y pública para que todos la puedan ver
+                    // Intenta escribir en la colección pública. Si esto falla, es un problema de permisos.
                     const requestsCollectionRef = collection(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`);
                     await addDoc(requestsCollectionRef, {
                         requesterId: user.uid,
@@ -303,9 +305,8 @@
                     setPage('dashboard');
                 } catch (error) {
                     console.error("Error al crear la solicitud:", error);
-                    // Proporcionamos un mensaje de error más útil al usuario
                     if (error.code && error.code === 'permission-denied') {
-                         setMessage("Error al crear la solicitud: Permisos insuficientes. Por favor, asegúrate de estar autenticado.");
+                         setMessage("Error de permisos: Las reglas de seguridad de Firestore no permiten crear una solicitud en esta colección pública. Por favor, contacta al administrador.");
                     } else {
                         setMessage(`Error al crear la solicitud: ${error.message}`);
                     }
@@ -334,7 +335,11 @@
                     setPage('my-requests');
                 } catch (error) {
                     console.error("Error al aceptar la solicitud:", error);
-                    setMessage(`Error al aceptar la solicitud: ${error.message}`);
+                    if (error.code && error.code === 'permission-denied') {
+                         setMessage("Error de permisos: Las reglas de seguridad de Firestore no permiten aceptar esta solicitud. Por favor, contacta al administrador.");
+                    } else {
+                        setMessage(`Error al aceptar la solicitud: ${error.message}`);
+                    }
                 } finally {
                     setLoading(false);
                 }
