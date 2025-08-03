@@ -12,27 +12,81 @@
             font-family: 'Inter', sans-serif;
         }
     </style>
-    <!-- Incluye React y ReactDOM desde CDN -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <!-- Incluye Babel para transpilar JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Incluye Firebase desde CDN -->
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
 </head>
 <body class="bg-gray-100">
     <div id="root"></div>
 
+    <!-- Carga de las bibliotecas de React y Babel -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Carga de las bibliotecas de Firebase como módulos -->
+    <script type="module">
+        // Importaciones del SDK de Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, updateDoc, collection, onSnapshot, addDoc, query } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+
+        // Variables globales proporcionadas por el entorno
+        const __app_id = typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-app-id';
+        const __firebase_config = typeof window.__firebase_config !== 'undefined' ? JSON.parse(window.__firebase_config) : {
+            apiKey: "AIzaSyDZmLQ2c5l0J27mgPHaIz9zXnxrDWPlsNM",
+            authDomain: "cashhood-9bcdd.firebaseapp.com",
+            projectId: "cashhood-9bcdd",
+            storageBucket: "cashhood-9bcdd.firebasestorage.app",
+            messagingSenderId: "1023739045278",
+            appId: "1:1023739045278:web:671bdb91f3585961b7628f",
+            measurementId: "G-37KF9F9SYW"
+        };
+        const __initial_auth_token = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : undefined;
+
+        // Inicializar Firebase y los servicios de forma global
+        const app = initializeApp(__firebase_config);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Crear un objeto global para exponer Firebase a la aplicación de React
+        window.firebase = {
+            app,
+            db,
+            auth: {
+                instance: auth,
+                onAuthStateChanged,
+                signInWithCustomToken,
+                signInAnonymously,
+                signOut,
+                GoogleAuthProvider,
+                signInWithPopup,
+                signInWithEmailAndPassword,
+                createUserWithEmailAndPassword
+            },
+            firestore: {
+                doc,
+                setDoc,
+                updateDoc,
+                collection,
+                onSnapshot,
+                addDoc,
+                query
+            }
+        };
+
+        // Autenticación inicial
+        if (__initial_auth_token) {
+            signInWithCustomToken(auth, __initial_auth_token).catch((error) => {
+                console.error("Error al iniciar sesión con token personalizado:", error);
+                signInAnonymously(auth);
+            });
+        } else {
+            signInAnonymously(auth);
+        }
+    </script>
+
+    <!-- Script de la aplicación React -->
     <script type="text/babel">
         // Importaciones de React
         const { useState, useEffect } = React;
-
-        // Variables globales proporcionadas por el entorno (simuladas aquí)
-        const __app_id = typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-app-id';
-        const __firebase_config = typeof window.__firebase_config !== 'undefined' ? window.__firebase_config : '{}';
-        const __initial_auth_token = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : undefined;
 
         // Componente de ícono de mapa simulado
         const MapIcon = () => (
@@ -45,95 +99,64 @@
         // Constantes para las rutas de Firestore
         const FIREBASE_COLLECTION_USERS = 'users';
         const FIREBASE_COLLECTION_REQUESTS = 'requests';
+        const appId = typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-app-id';
 
         function App() {
             const [user, setUser] = useState(null);
-            const [auth, setAuth] = useState(null);
-            const [db, setDb] = useState(null);
-            const [page, setPage] = useState('login'); // 'login', 'dashboard', 'map', 'my-requests', 'create-request'
             const [isAuthReady, setIsAuthReady] = useState(false);
             const [loading, setLoading] = useState(true);
             const [message, setMessage] = useState('');
+            const [page, setPage] = useState('login'); // 'login', 'dashboard', 'map', 'my-requests', 'create-request'
             const [requests, setRequests] = useState([]);
             const [userLocation, setUserLocation] = useState(null);
 
             const userId = user?.uid || crypto.randomUUID();
-            const appId = __app_id;
 
-            // Inicialización de Firebase y Auth Listener
+            // Sincronizar el estado de la autenticación
             useEffect(() => {
-                const initializeFirebase = async () => {
-                    // Verificamos que window.firebase esté disponible globalmente
-                    if (!window.firebase) {
-                        console.error("Firebase no está definido. Los scripts pueden no haberse cargado.");
-                        setMessage("Error al iniciar. Recarga la página.");
-                        setLoading(false);
-                        return;
-                    }
-
-                    try {
-                        const { initializeApp } = window.firebase;
-                        const { getAuth, signInWithCustomToken, onAuthStateChanged, signInAnonymously } = window.firebase.auth;
-                        const { getFirestore, doc, updateDoc, setDoc } = window.firebase.firestore;
-
-                        const firebaseConfig = JSON.parse(__firebase_config);
-                        const app = initializeApp(firebaseConfig);
-                        const authInstance = getAuth(app);
-                        const dbInstance = getFirestore(app);
-
-                        setAuth(authInstance);
-                        setDb(dbInstance);
-
-                        if (__initial_auth_token) {
-                            await signInWithCustomToken(authInstance, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(authInstance);
-                        }
-
-                        onAuthStateChanged(authInstance, (currentUser) => {
-                            if (currentUser) {
-                                setUser(currentUser);
-                                const userRef = doc(dbInstance, `/artifacts/${appId}/users/${currentUser.uid}/profile/${currentUser.uid}`);
-                                updateDoc(userRef, {
-                                    email: currentUser.email,
-                                    displayName: currentUser.displayName,
-                                    lastLogin: new Date()
-                                }, { merge: true }).catch(() => {
-                                    setDoc(userRef, {
-                                        uid: currentUser.uid,
-                                        email: currentUser.email,
-                                        displayName: currentUser.displayName,
-                                        createdAt: new Date(),
-                                        lastLogin: new Date()
-                                    });
-                                });
-                                setPage('dashboard');
-                            } else {
-                                setUser(null);
-                                setPage('login');
-                            }
-                            setIsAuthReady(true);
-                        });
-                    } catch (e) {
-                        console.error("Error al inicializar Firebase:", e);
-                        setMessage("Error al iniciar la aplicación. Por favor, inténtalo de nuevo.");
-                    } finally {
-                        setLoading(false);
-                    }
-                };
-
-                // No inicializamos si ya tenemos una instancia de auth
-                if (!auth) {
-                    initializeFirebase();
+                // Verificar que el objeto global de Firebase esté disponible
+                if (typeof window.firebase === 'undefined' || typeof window.firebase.auth === 'undefined' || typeof window.firebase.auth.onAuthStateChanged === 'undefined') {
+                    console.error("Las funciones de Firebase Auth no están disponibles. El script de módulos no se ha cargado correctamente.");
+                    return;
                 }
-            }, [auth]);
+                const authInstance = window.firebase.auth.instance;
+                const onAuthStateChanged = window.firebase.auth.onAuthStateChanged;
+                const unsubscribe = onAuthStateChanged(authInstance, (currentUser) => {
+                    setUser(currentUser);
+                    setIsAuthReady(true);
+                    setLoading(false);
+                    if (currentUser) {
+                        setPage('dashboard');
+                        // Usar las funciones de Firestore importadas del objeto global
+                        const { doc, updateDoc, setDoc } = window.firebase.firestore;
+                        const db = window.firebase.db;
+                        const userRef = doc(db, `/artifacts/${appId}/users/${currentUser.uid}/profile/${currentUser.uid}`);
+                        updateDoc(userRef, {
+                            email: currentUser.email,
+                            displayName: currentUser.displayName,
+                            lastLogin: new Date()
+                        }, { merge: true }).catch(() => {
+                            setDoc(userRef, {
+                                uid: currentUser.uid,
+                                email: currentUser.email,
+                                displayName: currentUser.displayName,
+                                createdAt: new Date(),
+                                lastLogin: new Date()
+                            });
+                        });
+                    } else {
+                        setPage('login');
+                    }
+                });
+                return () => unsubscribe();
+            }, []);
 
-            // Firestore Real-time Listener for requests
+            // Listener de Firestore en tiempo real para las solicitudes
             useEffect(() => {
-                if (!db || !isAuthReady || !user) return;
-
+                if (!isAuthReady || !user) return;
+                const db = window.firebase.db;
                 const { collection, onSnapshot, query } = window.firebase.firestore;
-
+                
                 const q = query(
                     collection(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`)
                 );
@@ -150,7 +173,7 @@
                 });
 
                 return () => unsubscribe();
-            }, [db, isAuthReady, user, appId]);
+            }, [isAuthReady, user]);
 
 
             // Geolocation
@@ -174,15 +197,12 @@
             }, []);
 
             const handleLogin = async (email, password) => {
-                // Se verifica que 'auth' exista antes de usarlo
-                if (!auth) {
-                    setMessage("El servicio de autenticación no está listo.");
-                    return;
-                }
+                const { signInWithEmailAndPassword } = window.firebase.auth;
+                const authInstance = window.firebase.auth.instance;
+                if (!authInstance) return;
                 try {
                     setLoading(true);
-                    const { signInWithEmailAndPassword } = window.firebase.auth;
-                    await signInWithEmailAndPassword(auth, email, password);
+                    await signInWithEmailAndPassword(authInstance, email, password);
                     setMessage('Inicio de sesión exitoso.');
                 } catch (error) {
                     setMessage(`Error de inicio de sesión: ${error.message}`);
@@ -193,15 +213,12 @@
             };
 
             const handleRegister = async (email, password) => {
-                // Se verifica que 'auth' exista antes de usarlo
-                if (!auth) {
-                    setMessage("El servicio de autenticación no está listo.");
-                    return;
-                }
+                const { createUserWithEmailAndPassword } = window.firebase.auth;
+                const authInstance = window.firebase.auth.instance;
+                if (!authInstance) return;
                 try {
                     setLoading(true);
-                    const { createUserWithEmailAndPassword } = window.firebase.auth;
-                    await createUserWithEmailAndPassword(auth, email, password);
+                    await createUserWithEmailAndPassword(authInstance, email, password);
                     setMessage('Registro exitoso. Has iniciado sesión.');
                 } catch (error) {
                     setMessage(`Error de registro: ${error.message}`);
@@ -212,16 +229,13 @@
             };
 
             const handleGoogleLogin = async () => {
-                // Se verifica que 'auth' exista antes de usarlo
-                if (!auth) {
-                    setMessage("El servicio de autenticación no está listo.");
-                    return;
-                }
+                const { GoogleAuthProvider, signInWithPopup } = window.firebase.auth;
+                const authInstance = window.firebase.auth.instance;
+                if (!authInstance) return;
                 try {
                     setLoading(true);
-                    const { GoogleAuthProvider, signInWithPopup } = window.firebase.auth;
                     const provider = new GoogleAuthProvider();
-                    await signInWithPopup(auth, provider);
+                    await signInWithPopup(authInstance, provider);
                     setMessage('Inicio de sesión con Google exitoso.');
                 } catch (error) {
                     setMessage(`Error al iniciar sesión con Google: ${error.message}`);
@@ -232,10 +246,11 @@
             };
 
             const handleLogout = async () => {
-                if (!auth) return;
+                const { signOut } = window.firebase.auth;
+                const authInstance = window.firebase.auth.instance;
+                if (!authInstance) return;
                 try {
-                    const { signOut } = window.firebase.auth;
-                    await signOut(auth);
+                    await signOut(authInstance);
                     setMessage('');
                     setPage('login');
                 } catch (error) {
@@ -244,6 +259,7 @@
             };
 
             const createExchangeRequest = async (amount, exchangeType) => {
+                const db = window.firebase.db;
                 if (!user || !userLocation || !db) {
                     setMessage("Error: Debes iniciar sesión y habilitar tu ubicación para crear una solicitud.");
                     return;
@@ -271,6 +287,7 @@
             };
 
             const handleAcceptRequest = async (requestId) => {
+                const db = window.firebase.db;
                 if (!user || !db) {
                     setMessage("Error: Debes iniciar sesión para aceptar una solicitud.");
                     return;
@@ -295,6 +312,7 @@
             };
 
             const handleRejectRequest = async (requestId) => {
+                const db = window.firebase.db;
                 if (!user || !db) {
                     setMessage("Error: Debes iniciar sesión para rechazar una solicitud.");
                     return;
@@ -319,7 +337,7 @@
 
             const getDistance = (loc1, loc2) => {
                 if (!loc1 || !loc2) return 'Desconocida';
-                const R = 6371; // Radius of the Earth in km
+                const R = 6371; // Radio de la Tierra en km
                 const dLat = (loc2.lat - loc1.lat) * Math.PI / 180;
                 const dLon = (loc2.lng - loc1.lng) * Math.PI / 180;
                 const a =
@@ -327,7 +345,7 @@
                     Math.cos(loc1.lat * Math.PI / 180) * Math.cos(loc2.lat * Math.PI / 180) *
                     Math.sin(dLon / 2) * Math.sin(dLon / 2);
                 const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-                return (R * c).toFixed(2); // Distance in km
+                return (R * c).toFixed(2); // Distancia en km
             };
 
             const renderPage = () => {
@@ -609,8 +627,8 @@
                                             <p className="text-gray-500 break-all">ID del solicitante: {req.requesterId}</p>
                                         </div>
                                         <div className="flex space-x-2">
-                                            <button onClick={() => handleAcceptRequest(req.id)} className="px-4 py-2 bg-green-500 text-white rounded-md shadow-md text-sm hover:bg-green-600 transition duration-150">Aceptar</button>
-                                            <button onClick={() => handleRejectRequest(req.id)} className="px-4 py-2 bg-red-500 text-white rounded-md shadow-md text-sm hover:bg-red-600 transition duration-150">Rechazar</button>
+                                            <button onClick={() => onAccept(req.id)} className="px-4 py-2 bg-green-500 text-white rounded-md shadow-md text-sm hover:bg-green-600 transition duration-150">Aceptar</button>
+                                            <button onClick={() => onReject(req.id)} className="px-4 py-2 bg-red-500 text-white rounded-md shadow-md text-sm hover:bg-red-600 transition duration-150">Rechazar</button>
                                         </div>
                                     </div>
                                 ))
