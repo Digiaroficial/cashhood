@@ -29,17 +29,12 @@
         // Importaciones de React
         const { useState, useEffect } = React;
 
-        // Importaciones de Firebase, ahora directamente disponibles
-        const { initializeApp } = firebase;
-        const { getAuth, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut, signInAnonymously } = firebase.auth;
-        const { getFirestore, doc, collection, addDoc, onSnapshot, query, updateDoc, setDoc } = firebase.firestore;
-        
         // Variables globales proporcionadas por el entorno (simuladas aquí)
         const __app_id = typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-app-id';
         const __firebase_config = typeof window.__firebase_config !== 'undefined' ? window.__firebase_config : '{}';
         const __initial_auth_token = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : undefined;
-        
-        // Tailwind CSS is assumed to be available
+
+        // Componente de ícono de mapa simulado
         const MapIcon = () => (
             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
@@ -47,7 +42,7 @@
             </svg>
         );
 
-        // Constants for Firestore paths
+        // Constantes para las rutas de Firestore
         const FIREBASE_COLLECTION_USERS = 'users';
         const FIREBASE_COLLECTION_REQUESTS = 'requests';
 
@@ -65,9 +60,22 @@
             const userId = user?.uid || crypto.randomUUID();
             const appId = __app_id;
 
+            // Inicialización de Firebase y Auth Listener
             useEffect(() => {
                 const initializeFirebase = async () => {
+                    // Verificamos que firebase esté disponible globalmente
+                    if (!window.firebase) {
+                        console.error("Firebase no está definido. Los scripts pueden no haberse cargado.");
+                        setMessage("Error al iniciar. Recarga la página.");
+                        setLoading(false);
+                        return;
+                    }
+
                     try {
+                        const { initializeApp } = window.firebase;
+                        const { getAuth, signInWithCustomToken, onAuthStateChanged, signInAnonymously } = window.firebase.auth;
+                        const { getFirestore, doc, updateDoc, setDoc } = window.firebase.firestore;
+
                         const firebaseConfig = JSON.parse(__firebase_config);
                         const app = initializeApp(firebaseConfig);
                         const authInstance = getAuth(app);
@@ -107,22 +115,26 @@
                             setIsAuthReady(true);
                         });
                     } catch (e) {
-                        console.error("Error initializing Firebase:", e);
+                        console.error("Error al inicializar Firebase:", e);
                         setMessage("Error al iniciar la aplicación. Por favor, inténtalo de nuevo.");
                     } finally {
                         setLoading(false);
                     }
                 };
-                if (!auth) {
-                    initializeFirebase();
-                }
-            }, [auth]);
 
+                initializeFirebase();
+            }, []);
+
+            // Firestore Real-time Listener for requests
             useEffect(() => {
                 if (!db || !isAuthReady || !user) return;
+
+                const { collection, onSnapshot, query } = window.firebase.firestore;
+
                 const q = query(
                     collection(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`)
                 );
+
                 const unsubscribe = onSnapshot(q, (querySnapshot) => {
                     const requestsData = querySnapshot.docs.map(doc => ({
                         id: doc.id,
@@ -130,12 +142,15 @@
                     }));
                     setRequests(requestsData);
                 }, (error) => {
-                    console.error("Error fetching requests:", error);
+                    console.error("Error al cargar las solicitudes:", error);
                     setMessage("Error al cargar las solicitudes.");
                 });
+
                 return () => unsubscribe();
             }, [db, isAuthReady, user, appId]);
 
+
+            // Geolocation
             useEffect(() => {
                 if ("geolocation" in navigator) {
                     navigator.geolocation.getCurrentPosition(
@@ -158,6 +173,7 @@
             const handleLogin = async (email, password) => {
                 try {
                     setLoading(true);
+                    const { signInWithEmailAndPassword } = window.firebase.auth;
                     await signInWithEmailAndPassword(auth, email, password);
                     setMessage('Inicio de sesión exitoso.');
                 } catch (error) {
@@ -171,6 +187,7 @@
             const handleRegister = async (email, password) => {
                 try {
                     setLoading(true);
+                    const { createUserWithEmailAndPassword } = window.firebase.auth;
                     await createUserWithEmailAndPassword(auth, email, password);
                     setMessage('Registro exitoso. Has iniciado sesión.');
                 } catch (error) {
@@ -184,6 +201,7 @@
             const handleGoogleLogin = async () => {
                 try {
                     setLoading(true);
+                    const { GoogleAuthProvider, signInWithPopup } = window.firebase.auth;
                     const provider = new GoogleAuthProvider();
                     await signInWithPopup(auth, provider);
                     setMessage('Inicio de sesión con Google exitoso.');
@@ -197,6 +215,7 @@
 
             const handleLogout = async () => {
                 try {
+                    const { signOut } = window.firebase.auth;
                     await signOut(auth);
                     setMessage('');
                     setPage('login');
@@ -212,6 +231,7 @@
                 }
                 try {
                     setLoading(true);
+                    const { collection, addDoc } = window.firebase.firestore;
                     await addDoc(collection(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`), {
                         requesterId: user.uid,
                         requesterEmail: user.email,
@@ -238,6 +258,7 @@
                 }
                 try {
                     setLoading(true);
+                    const { doc, updateDoc } = window.firebase.firestore;
                     const requestRef = doc(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`, requestId);
                     await updateDoc(requestRef, {
                         status: 'accepted',
@@ -261,6 +282,7 @@
                 }
                 try {
                     setLoading(true);
+                    const { doc, updateDoc } = window.firebase.firestore;
                     const requestRef = doc(db, `/artifacts/${appId}/public/data/${FIREBASE_COLLECTION_REQUESTS}`, requestId);
                     await updateDoc(requestRef, {
                         status: 'rejected',
@@ -327,7 +349,7 @@
             );
         }
 
-        // --- Components ---
+        // --- Componentes ---
 
         const AuthPage = ({ onLogin, onRegister, onGoogleLogin, message }) => {
             const [isLogin, setIsLogin] = useState(true);
